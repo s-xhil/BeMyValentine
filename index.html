@@ -43,6 +43,29 @@
           linear-gradient(135deg, var(--pink-1), #ffd7ea 35%, var(--pink-2));
       }
 
+      /* iOS: keep emojis together (prevents 🥺👉👈 splitting) */
+      .nowrap {
+        white-space: nowrap;
+        display: inline-block;
+      }
+      /* optional cute wiggle for the emoji cluster */
+      .emoji-wiggle {
+        animation: wiggle 2.6s ease-in-out infinite;
+        transform-origin: center;
+      }
+      @keyframes wiggle {
+        0%,
+        100% {
+          transform: rotate(0deg);
+        }
+        25% {
+          transform: rotate(-3deg);
+        }
+        75% {
+          transform: rotate(3deg);
+        }
+      }
+
       /* floating hearts background */
       .hearts {
         position: fixed;
@@ -126,7 +149,7 @@
 
       .sub {
         margin: 0 auto 16px;
-        max-width: 50ch;
+        max-width: 46ch;
         font-size: clamp(14px, 2.1vw, 18px);
         opacity: 0.9;
       }
@@ -146,6 +169,9 @@
         justify-content: center;
         flex-wrap: wrap;
         margin-top: 10px;
+        position: relative;
+        /* reserve some space so "No" can dodge without causing layout shifts */
+        min-height: 64px;
       }
 
       button {
@@ -166,27 +192,98 @@
         gap: 10px;
         user-select: none;
         touch-action: manipulation;
+        -webkit-tap-highlight-color: transparent;
       }
 
       #yesBtn {
         background: linear-gradient(135deg, var(--pink-3), var(--pink-4));
         color: white;
         transform: scale(1);
+        will-change: transform;
+        position: relative;
+        isolation: isolate;
+        outline: none;
       }
+
+      /* subtle "alive" bounce (works on iOS too) */
+      #yesBtn:not(:disabled) {
+        animation: yesPulse 2.2s ease-in-out infinite;
+      }
+      @keyframes yesPulse {
+        0%,
+        100% {
+          transform: translateY(0) scale(1);
+        }
+        50% {
+          transform: translateY(-2px) scale(1.02);
+        }
+      }
+
+      /* tap feedback */
       #yesBtn:active {
-        transform: scale(0.98);
+        transform: scale(0.98) !important;
+        animation: none;
+      }
+
+      /* tiny shine on hover (desktop) */
+      @media (hover: hover) {
+        #yesBtn:hover {
+          filter: brightness(1.05);
+          box-shadow: 0 14px 40px rgba(255, 63, 149, 0.28);
+        }
       }
 
       #noBtn {
         background: #fff;
         color: var(--ink);
         border: 1px solid rgba(255, 63, 149, 0.35);
+        position: relative; /* default until it starts dodging */
+        outline: none;
       }
 
       .note {
         margin-top: 14px;
         font-size: 13px;
         opacity: 0.7;
+        min-height: 1.2em;
+      }
+
+      /* "haptic" shake animation */
+      .shake {
+        animation: shake 0.28s linear;
+      }
+      @keyframes shake {
+        0% {
+          transform: translateX(0);
+        }
+        20% {
+          transform: translateX(-6px);
+        }
+        40% {
+          transform: translateX(6px);
+        }
+        60% {
+          transform: translateX(-4px);
+        }
+        80% {
+          transform: translateX(4px);
+        }
+        100% {
+          transform: translateX(0);
+        }
+      }
+
+      /* tiny pop for the card on NO */
+      .popCard {
+        animation: popCard 0.18s ease-out;
+      }
+      @keyframes popCard {
+        from {
+          transform: scale(1);
+        }
+        to {
+          transform: scale(1.01);
+        }
       }
 
       /* result area */
@@ -231,12 +328,23 @@
         margin-top: 10px;
       }
 
-      /* tiny sparkle text */
       .sparkle {
         background: linear-gradient(90deg, #ff3f95, #ff9fca, #ff3f95);
         -webkit-background-clip: text;
         background-clip: text;
         color: transparent;
+      }
+
+      /* Respect reduced motion */
+      @media (prefers-reduced-motion: reduce) {
+        .heart,
+        #yesBtn,
+        .emoji-wiggle {
+          animation: none !important;
+        }
+        * {
+          scroll-behavior: auto !important;
+        }
       }
     </style>
   </head>
@@ -245,7 +353,7 @@
     <div class="hearts" aria-hidden="true" id="hearts"></div>
 
     <main class="wrap">
-      <section class="card" role="group" aria-label="Valentine card">
+      <section class="card" role="group" aria-label="Valentine card" id="card">
         <div class="petal p1" aria-hidden="true"></div>
         <div class="petal p2" aria-hidden="true"></div>
 
@@ -253,12 +361,14 @@
         <h1>
           Sheetal, will you be my <span class="sparkle">Valentine</span>? 💘
         </h1>
+
         <p class="sub">
           I brought the pink, the peonies, and my biggest smile. All that’s
-          missing is a “yes” from you 🥺👉👈
+          missing is a “yes” from you
+          <span class="nowrap emoji-wiggle">🥺👉👈</span>
         </p>
 
-        <div class="btnRow">
+        <div class="btnRow" id="btnRow">
           <button id="yesBtn" type="button" aria-label="Yes">Yes! 💖</button>
 
           <button id="noBtn" type="button" aria-label="No">No 😶</button>
@@ -275,7 +385,7 @@
             Now you’re officially my favorite person forever.
           </p>
 
-          <!-- Replace the GIF URL below with any cute gif you like -->
+          <!-- Replace this GIF with any cute one you like -->
           <div class="gifBox">
             <img
               id="yesGif"
@@ -306,6 +416,8 @@
       }
 
       // --- Yes/No behavior ---
+      const card = document.getElementById("card");
+      const btnRow = document.getElementById("btnRow");
       const yesBtn = document.getElementById("yesBtn");
       const noBtn = document.getElementById("noBtn");
       const result = document.getElementById("result");
@@ -324,24 +436,40 @@
       ];
 
       function setYesScale(scale) {
+        // stop the idle pulse once it gets big, so it feels more “locked in”
+        if (scale > 1.25) yesBtn.style.animation = "none";
         yesBtn.style.transform = `scale(${scale})`;
         yesBtn.style.boxShadow = `0 14px 40px rgba(255, 63, 149, ${Math.min(0.55, 0.2 + scale / 10)})`;
       }
 
+      function addHapticFeel() {
+        // visual "haptic" feedback: quick shake on the NO button + tiny pop on card
+        noBtn.classList.remove("shake");
+        card.classList.remove("popCard");
+        // force reflow so animation restarts
+        void noBtn.offsetWidth;
+        void card.offsetWidth;
+        noBtn.classList.add("shake");
+        card.classList.add("popCard");
+
+        // if supported, tiny vibration on mobile (won't work on iOS Safari, but harmless)
+        if (navigator.vibrate) navigator.vibrate(18);
+      }
+
       function moveNoButton() {
-        // fun little dodge: move "No" to a new random spot within the card
-        const card = document.querySelector(".card");
-        const rect = card.getBoundingClientRect();
+        // dodge within the button area (so it doesn't cover the title)
+        const rowRect = btnRow.getBoundingClientRect();
         const btnRect = noBtn.getBoundingClientRect();
 
-        const padding = 16;
-        const maxX = rect.width - btnRect.width - padding;
-        const maxY = rect.height - btnRect.height - padding;
+        const padding = 8;
+        const maxX = Math.max(padding, rowRect.width - btnRect.width - padding);
+        const maxY = Math.max(
+          padding,
+          rowRect.height - btnRect.height - padding,
+        );
 
-        // Keep it mostly in the bottom half so it doesn't cover the title
-        const x = padding + Math.random() * maxX;
-        const y =
-          rect.height * 0.52 + Math.random() * (maxY - rect.height * 0.52);
+        const x = padding + Math.random() * (maxX - padding);
+        const y = padding + Math.random() * (maxY - padding);
 
         noBtn.style.position = "absolute";
         noBtn.style.left = x + "px";
@@ -349,16 +477,18 @@
       }
 
       noBtn.addEventListener("click", () => {
-        yesScale += 0.25; // grows each time she tries "No"
+        yesScale += 0.28; // grows each time she tries "No"
         setYesScale(yesScale);
 
         note.textContent =
           noMessages[Math.floor(Math.random() * noMessages.length)];
 
-        // Optional: make "No" dodge after a few clicks
-        if (yesScale >= 1.5) moveNoButton();
+        addHapticFeel();
 
-        // Keep Yes visible and increasingly irresistible
+        // start dodging after a couple of tries
+        if (yesScale >= 1.55) moveNoButton();
+
+        // keep Yes focused/visible
         yesBtn.focus({ preventScroll: true });
       });
 
